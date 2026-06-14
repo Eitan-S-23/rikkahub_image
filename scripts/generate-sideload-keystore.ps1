@@ -2,6 +2,7 @@ param(
     [string] $OutputDirectory = (Join-Path $HOME ".rikkahub-signing"),
     [string] $Alias = "rikkahub-sideload",
     [int] $ValidityDays = 10000,
+    [string] $KeytoolPath,
     [switch] $Force
 )
 
@@ -21,10 +22,74 @@ function New-Password {
     return [Convert]::ToBase64String($bytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")
 }
 
-$keytoolCommand = Get-Command keytool -ErrorAction SilentlyContinue
-$keytool = if ($null -ne $keytoolCommand) { $keytoolCommand.Source } else { $null }
+function Get-KeytoolCandidates {
+    $candidateRoots = @(
+        $env:JAVA_HOME,
+        $env:JDK_HOME,
+        $env:ANDROID_STUDIO_JBR,
+        "${env:ProgramFiles}\Android\Android Studio\jbr",
+        "${env:ProgramFiles}\Android\Android Studio\jre",
+        "${env:ProgramFiles}\Java",
+        "${env:ProgramFiles}\Eclipse Adoptium",
+        "${env:ProgramFiles}\Microsoft",
+        "${env:ProgramFiles}\Zulu",
+        "${env:ProgramFiles(x86)}\Java"
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    $directCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($KeytoolPath)) {
+        $directCandidates += $KeytoolPath
+    }
+
+    $pathCommand = Get-Command keytool -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        $directCandidates += $pathCommand.Source
+    }
+
+    foreach ($candidate in $directCandidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            Get-Item -LiteralPath $candidate
+        }
+    }
+
+    foreach ($root in $candidateRoots) {
+        if (-not (Test-Path -LiteralPath $root)) {
+            continue
+        }
+
+        $binKeytool = Join-Path $root "bin\keytool.exe"
+        if (Test-Path -LiteralPath $binKeytool -PathType Leaf) {
+            Get-Item -LiteralPath $binKeytool
+        }
+
+        Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $nestedKeytool = Join-Path $_.FullName "bin\keytool.exe"
+                if (Test-Path -LiteralPath $nestedKeytool -PathType Leaf) {
+                    Get-Item -LiteralPath $nestedKeytool
+                }
+            }
+    }
+}
+
+$keytool = Get-KeytoolCandidates |
+    Select-Object -ExpandProperty FullName -Unique |
+    Select-Object -First 1
+
 if (-not $keytool) {
-    throw "keytool was not found. Install a JDK and ensure keytool is in PATH."
+    throw @"
+keytool was not found.
+
+Install a JDK, then rerun this script. Recommended options:
+  winget install EclipseAdoptium.Temurin.17.JDK
+  winget install Microsoft.OpenJDK.17
+
+If a JDK is already installed, either set JAVA_HOME or pass keytool explicitly:
+  `$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.x.x"
+  .\scripts\generate-sideload-keystore.ps1
+
+  .\scripts\generate-sideload-keystore.ps1 -KeytoolPath "C:\Path\To\jdk\bin\keytool.exe"
+"@
 }
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
