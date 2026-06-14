@@ -168,4 +168,11 @@ jobs:
             gh release create "$TAG_NAME" --title "$RELEASE_NAME" --notes-file release-notes.md --target "$GITHUB_SHA"
           fi
 
+          gh release view "$TAG_NAME" --json assets --jq '.assets[].name' |
+            while IFS= read -r asset; do
+              if [[ "$asset" == *.apk ]]; then
+                gh release delete-asset "$TAG_NAME" "$asset" -y || true
+              fi
+            done
+
           gh release upload "$TAG_NAME" app/build/outputs/apk/sideload/*.apk --clobber
