@@ -2,8 +2,8 @@ package me.rerere.rikkahub.ui.pages.webview
 
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowRight01
-import me.rerere.hugeicons.stroke.Bug01
 import me.rerere.hugeicons.stroke.Earth
+import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Refresh01
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
@@ -125,7 +125,7 @@ fun WebViewPage(url: String, content: String) {
                             )
                             DropdownMenuItem(
                                 text = { Text("Console Logs") },
-                                leadingIcon = { Icon(HugeIcons.Bug01, contentDescription = null) },
+                                leadingIcon = { Icon(HugeIcons.LeftToRightListBullet, contentDescription = null) },
                                 onClick = {
                                     showDropdown = false
                                     showConsoleSheet = true

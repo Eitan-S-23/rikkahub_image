@@ -20,7 +20,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -132,9 +131,10 @@ class ChatCompletionsAPI(
         // 从 JsonObject 中提取必要的信息
         val id = bodyJson["id"]?.jsonPrimitive?.contentOrNull ?: ""
         val model = bodyJson["model"]?.jsonPrimitive?.contentOrNull ?: ""
-        val choice = bodyJson["choices"]?.jsonArray?.get(0)?.jsonObject ?: error("choices is null")
+        val choice = bodyJson["choices"]?.jsonArrayOrNull?.getOrNull(0)?.jsonObjectOrNull
+            ?: error("choices is null")
 
-        val message = choice["message"]?.jsonObject ?: throw Exception("message is null")
+        val message = choice["message"]?.jsonObjectOrNull ?: throw Exception("message is null")
         val finishReason = choice["finish_reason"]
             ?.jsonPrimitive
             ?.content
@@ -213,10 +213,10 @@ class ChatCompletionsAPI(
                         val id = it["id"]?.jsonPrimitive?.contentOrNull ?: ""
                         val model = it["model"]?.jsonPrimitive?.contentOrNull ?: ""
 
-                        val choices = it["choices"]?.jsonArray ?: JsonArray(emptyList())
+                        val choices = it["choices"]?.jsonArrayOrNull ?: JsonArray(emptyList())
                         val choiceList = buildList {
                             if (choices.isNotEmpty()) {
-                                val choice = choices[0].jsonObject
+                                val choice = choices[0].jsonObjectOrNull ?: return@buildList
                                 val message =
                                     choice["delta"]?.jsonObjectOrNull ?: choice["message"]?.jsonObjectOrNull
                                     ?: buildJsonObject {
@@ -375,8 +375,9 @@ class ChatCompletionsAPI(
         val bodyJson = json.parseToJsonElement(bodyStr).jsonObject
         val id = bodyJson["id"]?.jsonPrimitive?.contentOrNull ?: ""
         val model = bodyJson["model"]?.jsonPrimitive?.contentOrNull ?: ""
-        val choice = bodyJson["choices"]?.jsonArray?.get(0)?.jsonObject ?: error("choices is null")
-        val message = choice["message"]?.jsonObject ?: throw Exception("message is null")
+        val choice = bodyJson["choices"]?.jsonArrayOrNull?.getOrNull(0)?.jsonObjectOrNull
+            ?: error("choices is null")
+        val message = choice["message"]?.jsonObjectOrNull ?: throw Exception("message is null")
         val finishReason = choice["finish_reason"]
             ?.jsonPrimitive
             ?.content
