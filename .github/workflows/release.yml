@@ -64,21 +64,33 @@ jobs:
         run: |
           set -o pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease --stacktrace 2>&1 | tee gradle-build.log
+          ./gradlew --no-daemon --console=plain assembleRelease 2>&1 | tee gradle-build.log
 
       - name: Summarize Gradle failure
         if: failure()
         run: |
           if [ -f gradle-build.log ]; then
+            grep -n -E '(^e:| error: |Compilation error|FAILED|FAILURE:|Execution failed|Could not|Unresolved reference|Type mismatch)' gradle-build.log | head -n 200 > gradle-errors.log || true
+
             {
               echo "### Gradle build failed"
               echo
+              if [ -s gradle-errors.log ]; then
+                echo "#### Extracted errors"
+                echo
+                echo '```text'
+                cat gradle-errors.log
+                echo '```'
+                echo
+              fi
+              echo "#### Log tail"
+              echo
               echo '```text'
-              tail -n 120 gradle-build.log
+              tail -n 240 gradle-build.log
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
 
-            message="$(tail -n 40 gradle-build.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+            message="$(cat gradle-errors.log gradle-build.log | tail -n 80 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
             echo "::error title=Gradle Build Failed::$message"
           fi
 
