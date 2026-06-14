@@ -54,18 +54,45 @@ data class UIMessage(
 
                     is UIMessagePart.Image -> {
                         val lastPart = acc.lastOrNull()
-                        if (lastPart is UIMessagePart.Image) {
-                            // Append to the last Image part (for streaming base64)
-                            acc.dropLast(1) + lastPart.copy(
-                                url = lastPart.url + deltaPart.url,
-                                metadata = deltaPart.metadata ?: lastPart.metadata
-                            )
-                        } else {
-                            // Create new Image part
-                            acc + UIMessagePart.Image(
-                                url = "data:image/png;base64,${deltaPart.url}",
-                                metadata = deltaPart.metadata,
-                            )
+                        val deltaUrl = deltaPart.url
+                        when {
+                            deltaUrl.isBlank() -> {
+                                if (lastPart is UIMessagePart.Image && lastPart.url.isBlank()) {
+                                    acc
+                                } else {
+                                    acc + deltaPart
+                                }
+                            }
+
+                            lastPart is UIMessagePart.Image &&
+                                lastPart.url.canAppendBase64ImageChunk() &&
+                                !deltaUrl.isDirectImageReference() -> {
+                                val nextUrl = if (lastPart.url.isBlank()) {
+                                    deltaUrl.asInitialImageUrl()
+                                } else {
+                                    lastPart.url + deltaUrl
+                                }
+                                acc.dropLast(1) + lastPart.copy(
+                                    url = nextUrl,
+                                    metadata = deltaPart.metadata ?: lastPart.metadata
+                                )
+                            }
+
+                            lastPart is UIMessagePart.Image &&
+                                lastPart.url.isLoadingImageDataUrl() &&
+                                deltaUrl.isDirectImageReference() -> {
+                                acc.dropLast(1) + lastPart.copy(
+                                    url = deltaUrl,
+                                    metadata = deltaPart.metadata ?: lastPart.metadata
+                                )
+                            }
+
+                            else -> {
+                                acc + UIMessagePart.Image(
+                                    url = deltaUrl.asInitialImageUrl(),
+                                    metadata = deltaPart.metadata,
+                                )
+                            }
                         }
                     }
 
@@ -236,6 +263,24 @@ fun List<UIMessage>.handleMessageChunk(chunk: MessageChunk, model: Model? = null
  *
  * 例如: 文本，图片, 文档
  */
+private fun String.isDirectImageReference(): Boolean {
+    val value = trim()
+    return value.startsWith("data:image/", ignoreCase = true) ||
+        value.startsWith("http://", ignoreCase = true) ||
+        value.startsWith("https://", ignoreCase = true) ||
+        value.startsWith("file:", ignoreCase = true) ||
+        value.startsWith("content:", ignoreCase = true)
+}
+
+private fun String.isLoadingImageDataUrl(): Boolean =
+    matches(Regex("^data:image/[^;]*;base64,\\s*$", RegexOption.IGNORE_CASE))
+
+private fun String.canAppendBase64ImageChunk(): Boolean =
+    isBlank() || startsWith("data:image/", ignoreCase = true)
+
+private fun String.asInitialImageUrl(): String =
+    if (isBlank() || isDirectImageReference()) this else "data:image/png;base64,$this"
+
 fun List<UIMessagePart>.isEmptyInputMessage(): Boolean {
     if (this.isEmpty()) return true
     return this.all { message ->

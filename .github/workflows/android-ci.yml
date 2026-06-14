@@ -177,25 +177,23 @@ jobs:
 
           git tag -f "$TAG_NAME" "$GITHUB_SHA"
           git push --force origin "refs/tags/$TAG_NAME"
+          BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
           cat > release-notes.md <<EOF
           Automated sideload APK from the latest successful main branch build.
 
           Commit: ${GITHUB_SHA}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Published at: ${BUILD_TIME}
           EOF
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release edit "$TAG_NAME" --title "$RELEASE_NAME" --notes-file release-notes.md
+            gh release delete "$TAG_NAME" -y
           else
-            gh release create "$TAG_NAME" --title "$RELEASE_NAME" --notes-file release-notes.md --target "$GITHUB_SHA"
+            echo "No existing release named $TAG_NAME"
           fi
 
-          gh release view "$TAG_NAME" --json assets --jq '.assets[].name' |
-            while IFS= read -r asset; do
-              if [[ "$asset" == *.apk ]]; then
-                gh release delete-asset "$TAG_NAME" "$asset" -y || true
-              fi
-            done
-
-          gh release upload "$TAG_NAME" app/build/outputs/apk/sideload/*.apk --clobber
+          gh release create "$TAG_NAME" app/build/outputs/apk/sideload/*.apk \
+            --title "$RELEASE_NAME" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA"

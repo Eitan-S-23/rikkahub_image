@@ -49,11 +49,13 @@ import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Bug01
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
@@ -288,6 +290,9 @@ private fun ChatPageContent(
                     onClickMenu = {
                         previewMode = !previewMode
                     },
+                    onDebug = {
+                        navController.navigate(Screen.Debug)
+                    },
                     onUpdateTitle = {
                         vm.updateTitle(it)
                     }
@@ -462,6 +467,7 @@ private fun TopBar(
     bigScreen: Boolean,
     previewMode: Boolean,
     onClickMenu: () -> Unit,
+    onDebug: () -> Unit,
     onNewChat: () -> Unit,
     onUpdateTitle: (String) -> Unit
 ) {
@@ -521,6 +527,14 @@ private fun TopBar(
             }
         },
         actions = {
+            IconButton(
+                onClick = {
+                    onDebug()
+                }
+            ) {
+                Icon(HugeIcons.Bug01, "Debug")
+            }
+
             IconButton(
                 onClick = {
                     onClickMenu()

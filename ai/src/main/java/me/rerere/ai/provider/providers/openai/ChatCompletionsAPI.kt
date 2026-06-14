@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonArrayBuilder
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -71,6 +72,26 @@ import java.util.Base64
 import kotlin.time.Clock
 
 private const val TAG = "ChatCompletionsAPI"
+private val IMAGE_RESPONSE_KEYS = listOf(
+    "content",
+    "text",
+    "data",
+    "images",
+    "image",
+    "source",
+    "result",
+    "output"
+)
+private val DATA_IMAGE_REGEX = Regex(
+    pattern = "data:image/[^;\\s]+;base64,[A-Za-z0-9+/=\\s]+",
+    option = RegexOption.IGNORE_CASE
+)
+private val MARKDOWN_IMAGE_REGEX = Regex("!\\[[^]]*]\\(([^)\\s]+)\\)")
+private val HTTP_IMAGE_URL_REGEX = Regex(
+    pattern = "https?://[^\\s<>\"]+\\.(?:png|jpe?g|webp|gif)(?:\\?[^\\s<>\"]*)?",
+    option = RegexOption.IGNORE_CASE
+)
+private val BASE64_REGEX = Regex("^[A-Za-z0-9+/]+={0,2}$")
 
 class ChatCompletionsAPI(
     private val client: OkHttpClient,
@@ -125,7 +146,11 @@ class ChatCompletionsAPI(
                 UIMessageChoice(
                     index = 0,
                     delta = null,
-                    message = parseMessage(message),
+                    message = parseMessage(
+                        jsonObject = message,
+                        extraImageSources = imageResponseSources(choice, bodyJson),
+                        extractLooseImageUrls = params.model.shouldParseLooseImageUrls()
+                    ),
                     finishReason = finishReason
                 )
             ),
@@ -190,15 +215,21 @@ class ChatCompletionsAPI(
                             if (choices.isNotEmpty()) {
                                 val choice = choices[0].jsonObject
                                 val message =
-                                    choice["delta"]?.jsonObject ?: choice["message"]?.jsonObject
-                                    ?: throw Exception("delta/message is null")
+                                    choice["delta"]?.jsonObjectOrNull ?: choice["message"]?.jsonObjectOrNull
+                                    ?: buildJsonObject {
+                                        put("role", "assistant")
+                                    }
                                 val finishReason =
                                     choice["finish_reason"]?.jsonPrimitive?.contentOrNull
                                         ?: "unknown"
                                 add(
                                     UIMessageChoice(
                                         index = 0,
-                                        delta = parseMessage(message),
+                                        delta = parseMessage(
+                                            jsonObject = message,
+                                            extraImageSources = imageResponseSources(choice, it),
+                                            extractLooseImageUrls = params.model.shouldParseLooseImageUrls()
+                                        ),
                                         message = null,
                                         finishReason = finishReason,
                                     )
@@ -355,7 +386,11 @@ class ChatCompletionsAPI(
                 UIMessageChoice(
                     index = 0,
                     delta = null,
-                    message = parseMessage(message),
+                    message = parseMessage(
+                        jsonObject = message,
+                        extraImageSources = imageResponseSources(choice, bodyJson),
+                        extractLooseImageUrls = params.model.shouldParseLooseImageUrls()
+                    ),
                     finishReason = finishReason
                 )
             ),
@@ -390,9 +425,7 @@ class ChatCompletionsAPI(
             }
 
             // open router适配
-            if (params.model.type == ModelType.IMAGE ||
-                params.model.outputModalities.contains(Modality.IMAGE)
-            ) {
+            if (params.model.shouldRequestImageModalities()) {
                 put("modalities", buildJsonArray {
                     add("image")
                     add("text")
@@ -797,7 +830,11 @@ class ChatCompletionsAPI(
         })
     }
 
-    private fun parseMessage(jsonObject: JsonObject): UIMessage {
+    private fun parseMessage(
+        jsonObject: JsonObject,
+        extraImageSources: List<JsonElement> = emptyList(),
+        extractLooseImageUrls: Boolean = false
+    ): UIMessage {
         val role = MessageRole.valueOf(
             jsonObject["role"]?.jsonPrimitive?.contentOrNull?.uppercase() ?: "ASSISTANT"
         )
@@ -805,6 +842,7 @@ class ChatCompletionsAPI(
         // 也许支持其他模态的输出content?
         val contentElement = jsonObject["content"]
         val content = contentElement?.jsonPrimitiveOrNull?.contentOrNull ?: ""
+        val contentImageParts = collectImageParts(contentElement, extractLooseImageUrls)
         val reasoning = jsonObject["reasoning_content"]?.jsonPrimitiveOrNull?.contentOrNull
             ?: jsonObject["reasoning"]?.jsonPrimitiveOrNull?.contentOrNull
             ?: contentElement?.takeIf { it is JsonArray }?.let { arr ->
@@ -820,6 +858,14 @@ class ChatCompletionsAPI(
         return UIMessage(
             role = role,
             parts = buildList {
+                val seenImageUrls = linkedSetOf<String>()
+                fun addImagePart(image: UIMessagePart.Image) {
+                    val url = image.url.normalizeGeneratedImageUrl() ?: return
+                    if (url.isNotEmpty() && seenImageUrls.add(url)) {
+                        add(image.copy(url = url))
+                    }
+                }
+
                 if (!reasoning.isNullOrEmpty()) {
                     add(
                         UIMessagePart.Reasoning(
@@ -846,7 +892,9 @@ class ChatCompletionsAPI(
                         )
                     )
                 }
-                if (content.isNotEmpty()) add(UIMessagePart.Text(content))
+                if (content.isNotEmpty() && !content.shouldHideExtractedImagePayload(contentImageParts)) {
+                    add(UIMessagePart.Text(content))
+                }
                 contentElement?.jsonArrayOrNull?.forEach { contentPart ->
                     val contentObject = contentPart.jsonObjectOrNull ?: return@forEach
                     when (contentObject["type"]?.jsonPrimitive?.contentOrNull) {
@@ -856,13 +904,17 @@ class ChatCompletionsAPI(
                         }
 
                         "image_url" -> {
-                            contentObject.toImagePart()?.let(::add)
+                            contentObject.toImagePart()?.let(::addImagePart)
                         }
                     }
                 }
                 images.forEach { image ->
                     val imageObject = image.jsonObjectOrNull ?: return@forEach
-                    imageObject.toImagePart()?.let(::add)
+                    imageObject.toImagePart()?.let(::addImagePart)
+                }
+                contentImageParts.forEach(::addImagePart)
+                (listOf<JsonElement>(jsonObject) + extraImageSources).forEach { source ->
+                    collectImageParts(source, extractLooseImageUrls).forEach(::addImagePart)
                 }
             },
             annotations = parseAnnotations(
@@ -941,6 +993,197 @@ class ChatCompletionsAPI(
             mimeType = mimeType,
         )
     }
+
+    private fun imageResponseSources(choice: JsonObject, body: JsonObject? = null): List<JsonElement> = buildList {
+        IMAGE_RESPONSE_KEYS.forEach { key ->
+            choice[key]?.let(::add)
+        }
+        body?.let { jsonObject ->
+            IMAGE_RESPONSE_KEYS.forEach { key ->
+                jsonObject[key]?.let(::add)
+            }
+        }
+    }
+
+    private fun collectImageParts(
+        element: JsonElement?,
+        extractLooseImageUrls: Boolean = false,
+    ): List<UIMessagePart.Image> {
+        val urls = mutableListOf<String>()
+        collectImageUrls(element, urls, extractLooseImageUrls)
+        return urls.distinct().map { url -> UIMessagePart.Image(url) }
+    }
+
+    private fun collectImageUrls(
+        element: JsonElement?,
+        urls: MutableList<String>,
+        extractLooseImageUrls: Boolean,
+    ) {
+        when (element) {
+            null -> return
+            is JsonArray -> element.forEach { item -> collectImageUrls(item, urls, extractLooseImageUrls) }
+            is JsonObject -> {
+                collectBase64Image(element["b64_json"], urls)
+                collectBase64Image(element["base64"], urls)
+                collectUrlValue(element["url"], urls)
+
+                when (val imageUrl = element["image_url"]) {
+                    is JsonObject, is JsonArray -> collectImageUrls(imageUrl, urls, extractLooseImageUrls)
+                    else -> collectUrlValue(imageUrl, urls)
+                }
+
+                IMAGE_RESPONSE_KEYS.forEach { key ->
+                    element[key]?.let { value -> collectImageUrls(value, urls, extractLooseImageUrls) }
+                }
+            }
+            is JsonPrimitive -> {
+                element.contentOrNull?.let { text -> collectImageUrlsFromText(text, urls, extractLooseImageUrls) }
+            }
+        }
+    }
+
+    private fun collectBase64Image(element: JsonElement?, urls: MutableList<String>) {
+        val value = element?.jsonPrimitiveOrNull?.contentOrNull?.trim().orEmpty()
+        if (value.isBlank()) return
+        if (value.startsWith("data:", ignoreCase = true)) {
+            urls += value.replace(Regex("\\s+"), "")
+            return
+        }
+        val normalized = value.replace(Regex("\\s+"), "")
+        val mimeType = normalized.base64ImageMimeType() ?: "image/png"
+        urls += "data:$mimeType;base64,$normalized"
+    }
+
+    private fun collectUrlValue(element: JsonElement?, urls: MutableList<String>) {
+        val value = element?.jsonPrimitiveOrNull?.contentOrNull?.trim().orEmpty()
+        if (value.isBlank()) return
+        urls += if (value.startsWith("data:image/", ignoreCase = true)) {
+            value.replace(Regex("\\s+"), "")
+        } else {
+            value
+        }
+    }
+
+    private fun String.normalizeGeneratedImageUrl(): String? {
+        val value = trim()
+        if (value.isBlank()) return null
+        if (value.startsWith("data:image/", ignoreCase = true)) {
+            return value.replace(Regex("\\s+"), "")
+        }
+        if (value.startsWith("http://", ignoreCase = true) ||
+            value.startsWith("https://", ignoreCase = true) ||
+            value.startsWith("file://", ignoreCase = true)
+        ) {
+            return value
+        }
+
+        val normalized = value.replace(Regex("\\s+"), "")
+        val mimeType = normalized.base64ImageMimeType() ?: return null
+        return "data:$mimeType;base64,$normalized"
+    }
+
+    private fun String.shouldHideExtractedImagePayload(images: List<UIMessagePart.Image>): Boolean {
+        if (images.isEmpty()) return false
+        val text = stripCodeFence()
+        return text.startsWith("{") ||
+            text.startsWith("[") ||
+            text.startsWith("data:image/", ignoreCase = true) ||
+            text.base64ImageMimeType() != null ||
+            MARKDOWN_IMAGE_REGEX.containsMatchIn(text) ||
+            ((text.startsWith("http://", ignoreCase = true) || text.startsWith("https://", ignoreCase = true)) &&
+                !text.contains(Regex("\\s")))
+    }
+
+    private fun collectImageUrlsFromText(
+        raw: String,
+        urls: MutableList<String>,
+        extractLooseImageUrls: Boolean,
+    ) {
+        val text = raw.trim()
+        if (text.isBlank()) return
+
+        val possibleJson = text.stripCodeFence()
+        if (possibleJson.startsWith("{") || possibleJson.startsWith("[")) {
+            val parsed = runCatching { json.parseToJsonElement(possibleJson) }.getOrNull()
+            if (parsed != null) {
+                collectImageUrls(parsed, urls, extractLooseImageUrls)
+                return
+            }
+        }
+
+        DATA_IMAGE_REGEX.findAll(text).forEach { match ->
+            urls += match.value.replace(Regex("\\s+"), "")
+        }
+        MARKDOWN_IMAGE_REGEX.findAll(text).forEach { match ->
+            urls += match.groupValues[1].trim()
+        }
+        HTTP_IMAGE_URL_REGEX.findAll(text).forEach { match ->
+            urls += match.value.trimEnd(')', '.', ',', ';', '"', '\'')
+        }
+        if (extractLooseImageUrls &&
+            (text.startsWith("http://", ignoreCase = true) || text.startsWith("https://", ignoreCase = true))
+        ) {
+            if (!text.contains(Regex("\\s"))) {
+                urls += text.trimEnd(')', '.', ',', ';', '"', '\'')
+            }
+        }
+
+        val normalized = text.replace(Regex("\\s+"), "")
+        val mimeType = normalized.base64ImageMimeType() ?: return
+        urls += "data:$mimeType;base64,$normalized"
+    }
+
+    private fun String.stripCodeFence(): String {
+        val trimmed = trim()
+        if (!trimmed.startsWith("```")) return trimmed
+
+        val lines = trimmed.lines()
+        if (lines.size < 2) return trimmed
+
+        val withoutOpeningFence = lines.drop(1)
+        val withoutClosingFence = if (withoutOpeningFence.lastOrNull()?.trim() == "```") {
+            withoutOpeningFence.dropLast(1)
+        } else {
+            withoutOpeningFence
+        }
+        return withoutClosingFence.joinToString("\n").trim()
+    }
+
+    private fun String.base64ImageMimeType(): String? {
+        if (length < 128 || !BASE64_REGEX.matches(this)) return null
+        val sampleLength = minOf(length - length % 4, 128)
+        if (sampleLength <= 0) return null
+
+        val bytes = runCatching {
+            Base64.getDecoder().decode(take(sampleLength))
+        }.getOrNull() ?: return null
+
+        return when {
+            bytes.startsWithBytes(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) -> "image/png"
+            bytes.startsWithBytes(0xFF, 0xD8, 0xFF) -> "image/jpeg"
+            bytes.startsWithBytes(0x47, 0x49, 0x46, 0x38) -> "image/gif"
+            bytes.size >= 12 &&
+                bytes.startsWithBytes(0x52, 0x49, 0x46, 0x46) &&
+                bytes[8] == 0x57.toByte() &&
+                bytes[9] == 0x45.toByte() &&
+                bytes[10] == 0x42.toByte() &&
+                bytes[11] == 0x50.toByte() -> "image/webp"
+            else -> null
+        }
+    }
+
+    private fun ByteArray.startsWithBytes(vararg prefix: Int): Boolean {
+        if (size < prefix.size) return false
+        return prefix.indices.all { index -> this[index] == prefix[index].toByte() }
+    }
+
+    private fun Model.shouldRequestImageModalities(): Boolean =
+        type == ModelType.IMAGE ||
+            Modality.IMAGE in outputModalities
+
+    private fun Model.shouldParseLooseImageUrls(): Boolean =
+        shouldRequestImageModalities() ||
+            ModelRegistry.GPT_IMAGE.match(modelId)
 
     private fun JsonObject.toImagePart(): UIMessagePart.Image? {
         val type = this["type"]?.jsonPrimitive?.contentOrNull ?: return null

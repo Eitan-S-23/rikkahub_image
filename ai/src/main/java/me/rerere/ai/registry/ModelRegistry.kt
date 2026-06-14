@@ -31,6 +31,12 @@ object ModelRegistry {
         toolReasoningAbility()
     }
 
+    val GPT_IMAGE = defineModel {
+        tokens("gpt", "image")
+        visionInput()
+        imageOutput()
+    }
+
     val GPT_5 = defineModel {
         tokens("gpt", "5")
         notTokens("gpt", "5", ".")
@@ -446,6 +452,7 @@ object ModelRegistry {
         GPT_4_1,
         OPENAI_O_MODELS,
         GPT_OSS,
+        GPT_IMAGE,
         GPT_5,
         GPT_5_1,
         GPT_5_2,

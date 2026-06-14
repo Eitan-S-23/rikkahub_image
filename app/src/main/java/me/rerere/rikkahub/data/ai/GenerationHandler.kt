@@ -20,7 +20,9 @@ import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
 import me.rerere.ai.core.merge
 import me.rerere.ai.provider.CustomBody
+import me.rerere.ai.provider.Modality
 import me.rerere.ai.provider.Model
+import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
@@ -416,7 +418,8 @@ class GenerationHandler(
                 addAll(model.customBodies)
             }
         )
-        if (stream) {
+        val shouldStream = stream && !model.shouldUseNonStreamingChat()
+        if (shouldStream) {
             aiLoggingManager.addLog(
                 AILogging.Generation(
                     params = params,
@@ -471,6 +474,11 @@ class GenerationHandler(
             onUpdateMessages(messages)
         }
     }
+
+    private fun Model.shouldUseNonStreamingChat(): Boolean =
+        type == ModelType.IMAGE ||
+            Modality.IMAGE in outputModalities ||
+            ModelRegistry.GPT_IMAGE.match(modelId)
 
     fun translateText(
         settings: Settings,
