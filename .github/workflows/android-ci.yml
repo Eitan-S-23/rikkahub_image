@@ -100,8 +100,25 @@ jobs:
 
       - name: Gradle Build
         run: |
+          set -o pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
+          ./gradlew --no-daemon assembleDebug --stacktrace 2>&1 | tee gradle-build.log
+
+      - name: Summarize Gradle failure
+        if: failure()
+        run: |
+          if [ -f gradle-build.log ]; then
+            {
+              echo "### Gradle build failed"
+              echo
+              echo '```text'
+              tail -n 120 gradle-build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            message="$(tail -n 40 gradle-build.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+            echo "::error title=Gradle Build Failed::$message"
+          fi
 
       - name: Upload debug APKs
         uses: actions/upload-artifact@v4
