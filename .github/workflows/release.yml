@@ -27,7 +27,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+        run: sdkmanager --install "platforms;android-37"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
