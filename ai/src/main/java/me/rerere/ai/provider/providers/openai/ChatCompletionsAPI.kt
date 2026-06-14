@@ -4,7 +4,9 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -25,14 +27,18 @@ import kotlinx.serialization.json.putJsonArray
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.TokenUsage
+import me.rerere.ai.provider.ImageEditParams
+import me.rerere.ai.provider.ImageGenerationParams
 import me.rerere.ai.provider.Modality
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
+import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.providers.PartGroup
 import me.rerere.ai.provider.providers.groupPartsByToolBoundary
 import me.rerere.ai.registry.ModelRegistry
+import me.rerere.ai.ui.ImageGenerationItem
 import me.rerere.ai.ui.MessageChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessageAnnotation
@@ -59,6 +65,9 @@ import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+import java.io.File
+import java.net.URI
+import java.util.Base64
 import kotlin.time.Clock
 
 private const val TAG = "ChatCompletionsAPI"
@@ -245,6 +254,48 @@ class ChatCompletionsAPI(
     }
 
 
+    suspend fun generateImage(
+        providerSetting: ProviderSetting.OpenAI,
+        params: ImageGenerationParams,
+    ): Flow<ImageGenerationItem> = flow {
+        val chunk = generateText(
+            providerSetting = providerSetting,
+            messages = listOf(UIMessage.user(params.prompt)),
+            params = TextGenerationParams(
+                model = params.model,
+                customHeaders = params.customHeaders,
+                customBody = params.customBody,
+            ),
+        )
+        emitGeneratedImages(chunk)
+    }
+
+    suspend fun editImage(
+        providerSetting: ProviderSetting.OpenAI,
+        params: ImageEditParams,
+    ): Flow<ImageGenerationItem> = flow {
+        val chunk = generateText(
+            providerSetting = providerSetting,
+            messages = listOf(
+                UIMessage(
+                    role = MessageRole.USER,
+                    parts = buildList {
+                        add(UIMessagePart.Text(params.prompt))
+                        params.images.forEach { image ->
+                            add(UIMessagePart.Image(image.toUploadImageUrl()))
+                        }
+                    }
+                )
+            ),
+            params = TextGenerationParams(
+                model = params.model,
+                customHeaders = params.customHeaders,
+                customBody = params.customBody,
+            ),
+        )
+        emitGeneratedImages(chunk)
+    }
+
     private fun buildChatCompletionRequest(
         messages: List<UIMessage>,
         params: TextGenerationParams,
@@ -272,13 +323,13 @@ class ChatCompletionsAPI(
             }
 
             // open router适配
-            if(host == "openrouter.ai") {
-                if(params.model.outputModalities.contains(Modality.IMAGE)) {
-                    put("modalities", buildJsonArray {
-                        add("image")
-                        add("text")
-                    })
-                }
+            if (params.model.type == ModelType.IMAGE ||
+                params.model.outputModalities.contains(Modality.IMAGE)
+            ) {
+                put("modalities", buildJsonArray {
+                    add("image")
+                    add("text")
+                })
             }
 
             if (params.model.abilities.contains(ModelAbility.REASONING)) {
@@ -630,10 +681,11 @@ class ChatCompletionsAPI(
         )
 
         // 也许支持其他模态的输出content?
-        val content = jsonObject["content"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""
+        val contentElement = jsonObject["content"]
+        val content = contentElement?.jsonPrimitiveOrNull?.contentOrNull ?: ""
         val reasoning = jsonObject["reasoning_content"]?.jsonPrimitiveOrNull?.contentOrNull
             ?: jsonObject["reasoning"]?.jsonPrimitiveOrNull?.contentOrNull
-            ?: jsonObject["content"]?.takeIf { it is JsonArray }?.let { arr ->
+            ?: contentElement?.takeIf { it is JsonArray }?.let { arr ->
                 // Mistral接口
                 // {"id":"","object":"chat.completion.chunk","created":1772351733,"model":"magistral-medium-2509","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"好的"}]}]},"finish_reason":null}]}
                 arr.jsonArrayOrNull?.getOrNull(0)?.jsonObject?.get("thinking")?.jsonArrayOrNull?.getOrNull(0)?.jsonObjectOrNull?.get(
@@ -673,13 +725,22 @@ class ChatCompletionsAPI(
                     )
                 }
                 if (content.isNotEmpty()) add(UIMessagePart.Text(content))
+                contentElement?.jsonArrayOrNull?.forEach { contentPart ->
+                    val contentObject = contentPart.jsonObjectOrNull ?: return@forEach
+                    when (contentObject["type"]?.jsonPrimitive?.contentOrNull) {
+                        "text" -> {
+                            val text = contentObject["text"]?.jsonPrimitiveOrNull?.contentOrNull.orEmpty()
+                            if (text.isNotBlank()) add(UIMessagePart.Text(text))
+                        }
+
+                        "image_url" -> {
+                            contentObject.toImagePart()?.let(::add)
+                        }
+                    }
+                }
                 images.forEach { image ->
                     val imageObject = image.jsonObjectOrNull ?: return@forEach
-                    val type = imageObject["type"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                    if (type != "image_url") return@forEach
-                    val url = imageObject["image_url"]?.jsonObjectOrNull?.get("url")?.jsonPrimitive?.contentOrNull ?: return@forEach
-                    require(url.startsWith("data:image")) { "Only data uri is supported" }
-                    add(UIMessagePart.Image(url.substringAfter("data:image/png;base64,")))
+                    imageObject.toImagePart()?.let(::add)
                 }
             },
             annotations = parseAnnotations(
@@ -724,5 +785,69 @@ class ChatCompletionsAPI(
         val gonnaSend = filter { it is UIMessagePart.Text || it is UIMessagePart.Image }.size
         val texts = filter { it is UIMessagePart.Text }.size
         return gonnaSend == texts && texts == 1
+    }
+
+    private suspend fun FlowCollector<ImageGenerationItem>.emitGeneratedImages(chunk: MessageChunk) {
+        val messages = chunk.choices.flatMap { choice -> listOfNotNull(choice.message, choice.delta) }
+        val generatedImages = messages
+            .flatMap { message -> message.parts }
+            .filterIsInstance<UIMessagePart.Image>()
+            .map { image -> image.toImageGenerationItem() }
+
+        if (generatedImages.isEmpty()) {
+            val text = messages.joinToString("\n") { message -> message.toText() }
+                .ifBlank { "No image returned from chat completions" }
+            error(text)
+        }
+
+        generatedImages.forEach { emit(it) }
+    }
+
+    private fun UIMessagePart.Image.toImageGenerationItem(): ImageGenerationItem {
+        val mimeType = if (url.startsWith("data:image")) {
+            url.substringAfter("data:").substringBefore(";")
+        } else {
+            "image/png"
+        }
+        val data = if (url.startsWith("data:image")) {
+            url.substringAfter("base64,")
+        } else {
+            url
+        }
+        return ImageGenerationItem(
+            data = data,
+            mimeType = mimeType,
+        )
+    }
+
+    private fun JsonObject.toImagePart(): UIMessagePart.Image? {
+        val type = this["type"]?.jsonPrimitive?.contentOrNull ?: return null
+        if (type != "image_url") return null
+        val imageUrl = this["image_url"]
+        val url = imageUrl?.jsonObjectOrNull?.get("url")?.jsonPrimitive?.contentOrNull
+            ?: imageUrl?.jsonPrimitiveOrNull?.contentOrNull
+            ?: return null
+        return UIMessagePart.Image(url)
+    }
+
+    private fun String.toUploadImageUrl(): String = when {
+        startsWith("data:") || startsWith("http://") || startsWith("https://") -> this
+        startsWith("file://") -> File(URI(this)).toDataUrl()
+        else -> File(this).toDataUrl()
+    }
+
+    private fun File.toDataUrl(): String {
+        require(exists()) { "Image file does not exist: $absolutePath" }
+        require(isFile) { "Image path is not a file: $absolutePath" }
+
+        val base64 = Base64.getEncoder().encodeToString(readBytes())
+        return "data:${imageMimeTypeByName()};base64,$base64"
+    }
+
+    private fun File.imageMimeTypeByName(): String = when (extension.lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        else -> "image/png"
     }
 }

@@ -13,6 +13,21 @@ plugins {
     alias(libs.plugins.firebase.crashlytics)
 }
 
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    FileInputStream(localPropertiesFile).use(localProperties::load)
+}
+
+fun hasSideloadSigningConfig(): Boolean {
+    return listOf(
+        "sideloadStoreFile",
+        "sideloadStorePassword",
+        "sideloadKeyAlias",
+        "sideloadKeyPassword",
+    ).all { !localProperties.getProperty(it).isNullOrBlank() }
+}
+
 android {
     namespace = "me.rerere.rikkahub"
     compileSdk = 37
@@ -45,25 +60,26 @@ android {
 
     signingConfigs {
         create("release") {
-            val localProperties = Properties()
-            val localPropertiesFile = rootProject.file("local.properties")
+            val storeFilePath = localProperties.getProperty("storeFile")
+            val storePasswordValue = localProperties.getProperty("storePassword")
+            val keyAliasValue = localProperties.getProperty("keyAlias")
+            val keyPasswordValue = localProperties.getProperty("keyPassword")
 
-            if (localPropertiesFile.exists()) {
-                localProperties.load(FileInputStream(localPropertiesFile))
-
-                val storeFilePath = localProperties.getProperty("storeFile")
-                val storePasswordValue = localProperties.getProperty("storePassword")
-                val keyAliasValue = localProperties.getProperty("keyAlias")
-                val keyPasswordValue = localProperties.getProperty("keyPassword")
-
-                if (storeFilePath != null && storePasswordValue != null &&
-                    keyAliasValue != null && keyPasswordValue != null
-                ) {
-                    storeFile = file(storeFilePath)
-                    storePassword = storePasswordValue
-                    keyAlias = keyAliasValue
-                    keyPassword = keyPasswordValue
-                }
+            if (storeFilePath != null && storePasswordValue != null &&
+                keyAliasValue != null && keyPasswordValue != null
+            ) {
+                storeFile = file(storeFilePath)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            }
+        }
+        create("sideload") {
+            if (hasSideloadSigningConfig()) {
+                storeFile = file(localProperties.getProperty("sideloadStoreFile"))
+                storePassword = localProperties.getProperty("sideloadStorePassword")
+                keyAlias = localProperties.getProperty("sideloadKeyAlias")
+                keyPassword = localProperties.getProperty("sideloadKeyPassword")
             }
         }
     }
@@ -83,7 +99,11 @@ android {
         create("sideload") {
             initWith(getByName("release"))
             matchingFallbacks.add("release")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasSideloadSigningConfig()) {
+                signingConfigs.getByName("sideload")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isDebuggable = false
         }
         debug {

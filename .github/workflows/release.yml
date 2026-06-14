@@ -45,7 +45,12 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare CI google-services.json
+      - name: Prepare CI build files
+        env:
+          SIDELOAD_KEYSTORE_BASE64: ${{ secrets.SIDELOAD_KEYSTORE_BASE64 }}
+          SIDELOAD_KEYSTORE_PASSWORD: ${{ secrets.SIDELOAD_KEYSTORE_PASSWORD }}
+          SIDELOAD_KEY_ALIAS: ${{ secrets.SIDELOAD_KEY_ALIAS }}
+          SIDELOAD_KEY_PASSWORD: ${{ secrets.SIDELOAD_KEY_PASSWORD }}
         run: |
           cat > app/google-services.json <<'EOF'
           {
@@ -97,6 +102,24 @@ jobs:
             "configuration_version": "1"
           }
           EOF
+
+          if [ -n "${SIDELOAD_KEYSTORE_BASE64:-}" ] || \
+             [ -n "${SIDELOAD_KEYSTORE_PASSWORD:-}" ] || \
+             [ -n "${SIDELOAD_KEY_ALIAS:-}" ] || \
+             [ -n "${SIDELOAD_KEY_PASSWORD:-}" ]; then
+            : "${SIDELOAD_KEYSTORE_BASE64:?Missing SIDELOAD_KEYSTORE_BASE64 GitHub secret}"
+            : "${SIDELOAD_KEYSTORE_PASSWORD:?Missing SIDELOAD_KEYSTORE_PASSWORD GitHub secret}"
+            : "${SIDELOAD_KEY_ALIAS:?Missing SIDELOAD_KEY_ALIAS GitHub secret}"
+            : "${SIDELOAD_KEY_PASSWORD:?Missing SIDELOAD_KEY_PASSWORD GitHub secret}"
+
+            printf '%s' "$SIDELOAD_KEYSTORE_BASE64" | base64 --decode > app/sideload.keystore
+            {
+              printf '%s\n' "sideloadStoreFile=sideload.keystore"
+              printf '%s\n' "sideloadStorePassword=$SIDELOAD_KEYSTORE_PASSWORD"
+              printf '%s\n' "sideloadKeyAlias=$SIDELOAD_KEY_ALIAS"
+              printf '%s\n' "sideloadKeyPassword=$SIDELOAD_KEY_PASSWORD"
+            } >> local.properties
+          fi
 
       - name: Gradle Build
         run: |

@@ -21,7 +21,9 @@ import me.rerere.ai.provider.EmbeddingGenerationParams
 import me.rerere.ai.provider.EmbeddingGenerationResult
 import me.rerere.ai.provider.ImageEditParams
 import me.rerere.ai.provider.ImageGenerationParams
+import me.rerere.ai.provider.Modality
 import me.rerere.ai.provider.Model
+import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
@@ -215,6 +217,10 @@ class OpenAIProvider(
             "Expected OpenAI provider setting"
         }
 
+        if (providerSetting.useChatCompletionsForImage(params.model)) {
+            return chatCompletionsAPI.generateImage(providerSetting, params)
+        }
+
         val key = keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())
 
         val requestBody = json.encodeToString(
@@ -263,6 +269,10 @@ class OpenAIProvider(
         }
         require(params.images.isNotEmpty()) {
             "At least one image is required"
+        }
+
+        if (providerSetting.useChatCompletionsForImage(params.model)) {
+            return chatCompletionsAPI.editImage(providerSetting, params)
         }
 
         val key = keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())
@@ -391,6 +401,15 @@ class OpenAIProvider(
         JsonObject(toMutableMap().apply {
             put("stream", JsonPrimitive(true))
         })
+
+    private fun ProviderSetting.OpenAI.useChatCompletionsForImage(model: Model): Boolean {
+        if (!chatCompletionsPath.contains("chat/completions", ignoreCase = true)) return false
+        if (baseUrl.contains("api.openai.com", ignoreCase = true)) return false
+
+        return model.type == ModelType.IMAGE ||
+            Modality.IMAGE in model.inputModalities ||
+            Modality.IMAGE in model.outputModalities
+    }
 
     companion object {
         private val SUPPORTED_EDIT_IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp")
