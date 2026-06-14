@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-debug:
+  build-sideload:
     runs-on: ubuntu-latest
 
     permissions:
@@ -106,7 +106,7 @@ jobs:
         run: |
           set -o pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon --console=plain assembleDebug 2>&1 | tee gradle-build.log
+          ./gradlew --no-daemon --console=plain assembleSideload 2>&1 | tee gradle-build.log
 
       - name: Summarize Gradle failure
         if: failure()
@@ -136,19 +136,19 @@ jobs:
             echo "::error title=Gradle Build Failed::$message"
           fi
 
-      - name: Upload debug APKs
+      - name: Upload sideload APKs
         uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: debug-apks
-          path: app/build/outputs/apk/debug/*.apk
+          name: sideload-apks
+          path: app/build/outputs/apk/sideload/*.apk
 
-      - name: Publish latest debug release
+      - name: Publish latest sideload release
         if: success() && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: main-latest
-          RELEASE_NAME: Latest Main Debug Build
+          RELEASE_NAME: Latest Main Sideload Build
         run: |
           set -euo pipefail
 
@@ -156,7 +156,7 @@ jobs:
           git push --force origin "refs/tags/$TAG_NAME"
 
           cat > release-notes.md <<EOF
-          Automated APK from the latest successful main branch build.
+          Automated sideload APK from the latest successful main branch build.
 
           Commit: ${GITHUB_SHA}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
@@ -168,4 +168,4 @@ jobs:
             gh release create "$TAG_NAME" --title "$RELEASE_NAME" --notes-file release-notes.md --target "$GITHUB_SHA"
           fi
 
-          gh release upload "$TAG_NAME" app/build/outputs/apk/debug/*.apk --clobber
+          gh release upload "$TAG_NAME" app/build/outputs/apk/sideload/*.apk --clobber

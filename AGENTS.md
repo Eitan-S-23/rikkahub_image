@@ -17,10 +17,10 @@
 
 - Agent 修改程序后，不得在本地运行任何编译、构建、测试或 lint 命令，包括但不限于 `./gradlew assemble*`、`./gradlew bundle*`、`./gradlew test`、`./gradlew lint`、`pnpm run build`、Android Studio Build/Run。
 - Agent 只能通过 `git push` 触发 GitHub Actions 进行编译构建验证。普通分支 push 触发 `.github/workflows/android-ci.yml`，推送 `v*` 标签触发 `.github/workflows/release.yml`。
-- `main` 分支 push 构建成功后会更新 GitHub Release `main-latest`，并把 Debug APK 上传为可下载 asset；推送 `v*` 标签构建成功后会把 Release APK 上传到对应版本的 GitHub Release。
+- `main` 分支 push 构建成功后会更新 GitHub Release `main-latest`，并把 sideload APK 上传为可下载 asset；推送 `v*` 标签构建成功后会把 sideload APK 上传到对应版本的 GitHub Release。sideload 构建使用 Release 的压缩/资源裁剪配置，但用 Android debug key 自动签名，适合直接下载安装，不依赖 Google Play 或私有 release 签名 secrets。
 - 如需验证构建结果，Agent 应查看 GitHub Actions 运行结果或 artifact，不得以本地构建替代。
 
-构建应用需要在 `app/` 下提供 `google-services.json`（用于 Firebase）；GitHub Actions 的 Debug CI 会生成占位配置，Release 构建使用仓库 secrets。
+构建应用需要在 `app/` 下提供 `google-services.json`（用于 Firebase）；GitHub Actions 会生成占位配置用于 sideload 构建。
 `web` 模块会在 `preBuild` 阶段构建 `web-ui/` 并复制静态资源；GitHub Actions 会安装 Node.js、pnpm 和 `web-ui` 依赖。
 
 ## Coding Style & Naming Conventions

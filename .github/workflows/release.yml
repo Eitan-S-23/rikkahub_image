@@ -45,26 +45,64 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare build files
-        env:
-          KEY_BASE64: ${{ secrets.KEY_BASE64 }}
-          SIGNING_CONFIG: ${{ secrets.SIGNING_CONFIG }}
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+      - name: Prepare CI google-services.json
         run: |
-          set -euo pipefail
-          : "${KEY_BASE64:?Missing KEY_BASE64 GitHub secret}"
-          : "${SIGNING_CONFIG:?Missing SIGNING_CONFIG GitHub secret}"
-          : "${GOOGLE_SERVICES_JSON:?Missing GOOGLE_SERVICES_JSON GitHub secret}"
-
-          printf '%s' "$KEY_BASE64" | base64 --decode > app/app.key
-          printf '%s\n' "$SIGNING_CONFIG" > local.properties
-          printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          cat > app/google-services.json <<'EOF'
+          {
+            "project_info": {
+              "project_number": "0",
+              "project_id": "rikkahub-ci",
+              "storage_bucket": "rikkahub-ci.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:0:android:0000000000000000000000",
+                  "android_client_info": {
+                    "package_name": "me.rerere.rikkahub"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "ci-placeholder"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              },
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:0:android:0000000000000000000001",
+                  "android_client_info": {
+                    "package_name": "me.rerere.rikkahub.debug"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "ci-placeholder"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
 
       - name: Gradle Build
         run: |
           set -o pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon --console=plain assembleRelease 2>&1 | tee gradle-build.log
+          ./gradlew --no-daemon --console=plain assembleSideload 2>&1 | tee gradle-build.log
 
       - name: Summarize Gradle failure
         if: failure()
@@ -98,8 +136,8 @@ jobs:
         uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: release-apks
-          path: app/build/outputs/apk/release/*.apk
+          name: sideload-apks
+          path: app/build/outputs/apk/sideload/*.apk
 
       - name: Publish GitHub release
         if: success()
@@ -109,9 +147,9 @@ jobs:
           set -euo pipefail
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" app/build/outputs/apk/release/*.apk --clobber
+            gh release upload "$GITHUB_REF_NAME" app/build/outputs/apk/sideload/*.apk --clobber
           else
-            gh release create "$GITHUB_REF_NAME" app/build/outputs/apk/release/*.apk \
+            gh release create "$GITHUB_REF_NAME" app/build/outputs/apk/sideload/*.apk \
               --title "$GITHUB_REF_NAME" \
               --generate-notes
           fi
