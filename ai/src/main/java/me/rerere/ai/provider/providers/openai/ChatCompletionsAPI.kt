@@ -89,7 +89,7 @@ class ChatCompletionsAPI(
             )
 
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+            .url(providerSetting.chatCompletionsEndpoint())
             .headers(params.customHeaders.toHeaders())
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader("Authorization", "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}")
@@ -146,7 +146,7 @@ class ChatCompletionsAPI(
         )
 
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+            .url(providerSetting.chatCompletionsEndpoint())
             .headers(params.customHeaders.toHeaders())
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader("Authorization", "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}")
@@ -274,24 +274,21 @@ class ChatCompletionsAPI(
         providerSetting: ProviderSetting.OpenAI,
         params: ImageEditParams,
     ): Flow<ImageGenerationItem> = flow {
+        val imageUrls = params.images.map { image -> image.toUploadImageUrl() }
+        val textParams = TextGenerationParams(
+            model = params.model,
+            customHeaders = params.customHeaders,
+            customBody = params.customBody,
+        )
         val chunk = generateImageChatCompletion(
             providerSetting = providerSetting,
-            messages = listOf(
-                UIMessage(
-                    role = MessageRole.USER,
-                    parts = buildList {
-                        add(UIMessagePart.Text(params.prompt))
-                        params.images.forEach { image ->
-                            add(UIMessagePart.Image(image.toUploadImageUrl()))
-                        }
-                    }
-                )
+            requestBody = buildImageEditChatCompletionRequest(
+                prompt = params.prompt,
+                imageUrls = imageUrls,
+                params = textParams,
             ),
-            params = TextGenerationParams(
-                model = params.model,
-                customHeaders = params.customHeaders,
-                customBody = params.customBody,
-            ),
+            params = textParams,
+            imageCount = imageUrls.size,
         )
         emitGeneratedImages(chunk)
     }
@@ -300,25 +297,38 @@ class ChatCompletionsAPI(
         providerSetting: ProviderSetting.OpenAI,
         messages: List<UIMessage>,
         params: TextGenerationParams,
-    ): MessageChunk = withContext(Dispatchers.IO) {
+    ): MessageChunk {
         val requestBody =
             buildImageChatCompletionRequest(
                 messages = messages,
                 params = params,
                 providerSetting = providerSetting,
             )
+        val imageCount = messages.sumOf { message ->
+            message.parts.count { part -> part is UIMessagePart.Image }
+        }
+        return generateImageChatCompletion(
+            providerSetting = providerSetting,
+            requestBody = requestBody,
+            params = params,
+            imageCount = imageCount,
+        )
+    }
 
+    private suspend fun generateImageChatCompletion(
+        providerSetting: ProviderSetting.OpenAI,
+        requestBody: JsonObject,
+        params: TextGenerationParams,
+        imageCount: Int,
+    ): MessageChunk = withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+            .url(providerSetting.chatCompletionsEndpoint())
             .headers(params.customHeaders.toHeaders())
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader("Authorization", "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}")
             .configureReferHeaders(providerSetting.baseUrl)
             .build()
 
-        val imageCount = messages.sumOf { message ->
-            message.parts.count { part -> part is UIMessagePart.Image }
-        }
         Log.i(TAG, "generateImageChatCompletion: model=${params.model.modelId}, images=$imageCount")
 
         val response = client.newCall(request).await()
@@ -548,6 +558,48 @@ class ChatCompletionsAPI(
             put("messages", buildMessages(messages, providerSetting.includeHistoryReasoning))
             put("stream", false)
         }.mergeCustomBody(params.customBody)
+    }
+
+    private fun buildImageEditChatCompletionRequest(
+        prompt: String,
+        imageUrls: List<String>,
+        params: TextGenerationParams,
+    ): JsonObject {
+        return buildJsonObject {
+            put("model", params.model.modelId)
+            putJsonArray("messages") {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("content") {
+                        add(buildJsonObject {
+                            put("type", "text")
+                            put("text", prompt)
+                        })
+                        imageUrls.forEach { imageUrl ->
+                            add(buildJsonObject {
+                                put("type", "image_url")
+                                put("image_url", buildJsonObject {
+                                    put("url", imageUrl)
+                                })
+                            })
+                        }
+                    }
+                })
+            }
+            put("stream", false)
+        }.mergeCustomBody(params.customBody)
+    }
+
+    private fun ProviderSetting.OpenAI.chatCompletionsEndpoint(): String {
+        val base = baseUrl.trimEnd('/')
+        val path = chatCompletionsPath.trim()
+        return when {
+            base.contains("chat/completions", ignoreCase = true) -> base
+            path.startsWith("http://") || path.startsWith("https://") -> path
+            path.isNotBlank() -> "$base/${path.trimStart('/')}"
+            base.endsWith("/v1") -> "$base/chat/completions"
+            else -> "$base/v1/chat/completions"
+        }
     }
 
     private fun isModelAllowTemperature(model: Model): Boolean {

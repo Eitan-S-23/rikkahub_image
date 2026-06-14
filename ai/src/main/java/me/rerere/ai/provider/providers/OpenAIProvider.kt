@@ -403,7 +403,7 @@ class OpenAIProvider(
         })
 
     private fun ProviderSetting.OpenAI.useChatCompletionsForImage(model: Model): Boolean {
-        if (!chatCompletionsPath.contains("chat/completions", ignoreCase = true)) return false
+        if (!hasChatCompletionsEndpoint()) return false
         if (baseUrl.contains("api.openai.com", ignoreCase = true)) return false
 
         return model.type == ModelType.IMAGE ||
@@ -412,10 +412,15 @@ class OpenAIProvider(
     }
 
     private fun ProviderSetting.OpenAI.useChatCompletionsForImageEdit(): Boolean {
-        if (!chatCompletionsPath.contains("chat/completions", ignoreCase = true)) return false
+        if (!hasChatCompletionsEndpoint()) return false
         if (baseUrl.contains("api.openai.com", ignoreCase = true)) return false
 
         return true
+    }
+
+    private fun ProviderSetting.OpenAI.hasChatCompletionsEndpoint(): Boolean {
+        return baseUrl.contains("chat/completions", ignoreCase = true) ||
+            chatCompletionsPath.contains("chat/completions", ignoreCase = true)
     }
 
     companion object {
