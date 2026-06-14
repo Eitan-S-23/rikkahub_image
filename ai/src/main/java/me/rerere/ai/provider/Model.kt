@@ -19,6 +19,10 @@ data class Model(
     val providerOverwrite: ProviderSetting? = null,
 )
 
+fun Model.hasImageName(): Boolean =
+    modelId.contains("image", ignoreCase = true) ||
+        displayName.contains("image", ignoreCase = true)
+
 @Serializable
 enum class ModelType {
     CHAT,

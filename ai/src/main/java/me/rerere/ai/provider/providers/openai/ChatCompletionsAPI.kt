@@ -36,6 +36,7 @@ import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.provider.hasImageName
 import me.rerere.ai.provider.providers.PartGroup
 import me.rerere.ai.provider.providers.groupPartsByToolBoundary
 import me.rerere.ai.registry.ModelRegistry
@@ -1183,7 +1184,7 @@ class ChatCompletionsAPI(
 
     private fun Model.shouldParseLooseImageUrls(): Boolean =
         shouldRequestImageModalities() ||
-            ModelRegistry.GPT_IMAGE.match(modelId)
+            hasImageName()
 
     private fun JsonObject.toImagePart(): UIMessagePart.Image? {
         val type = this["type"]?.jsonPrimitive?.contentOrNull ?: return null

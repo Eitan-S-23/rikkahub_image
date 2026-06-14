@@ -27,12 +27,14 @@ import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.provider.hasImageName
 import me.rerere.ai.registry.ModelRegistry
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.handleMessageChunk
 import me.rerere.ai.ui.limitContext
+import me.rerere.ai.util.hasImageGenerationIntent
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.MessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.OutputMessageTransformer
@@ -418,7 +420,7 @@ class GenerationHandler(
                 addAll(model.customBodies)
             }
         )
-        val shouldStream = stream && !model.shouldUseNonStreamingChat()
+        val shouldStream = stream && !model.shouldUseNonStreamingChat(internalMessages)
         if (shouldStream) {
             aiLoggingManager.addLog(
                 AILogging.Generation(
@@ -475,10 +477,11 @@ class GenerationHandler(
         }
     }
 
-    private fun Model.shouldUseNonStreamingChat(): Boolean =
+    private fun Model.shouldUseNonStreamingChat(messages: List<UIMessage>): Boolean =
         type == ModelType.IMAGE ||
             Modality.IMAGE in outputModalities ||
-            ModelRegistry.GPT_IMAGE.match(modelId)
+            hasImageName() ||
+            messages.hasImageGenerationIntent()
 
     fun translateText(
         settings: Settings,

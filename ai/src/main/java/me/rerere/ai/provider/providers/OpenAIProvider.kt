@@ -27,9 +27,9 @@ import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.provider.hasImageName
 import me.rerere.ai.provider.providers.openai.ChatCompletionsAPI
 import me.rerere.ai.provider.providers.openai.ResponseAPI
-import me.rerere.ai.registry.ModelRegistry
 import me.rerere.ai.ui.ImageAspectRatio
 import me.rerere.ai.ui.ImageGenerationItem
 import me.rerere.ai.ui.MessageChunk
@@ -410,7 +410,7 @@ class OpenAIProvider(
         return model.type == ModelType.IMAGE ||
             Modality.IMAGE in model.inputModalities ||
             Modality.IMAGE in model.outputModalities ||
-            ModelRegistry.GPT_IMAGE.match(model.modelId)
+            model.hasImageName()
     }
 
     private fun ProviderSetting.OpenAI.useChatCompletionsForImageEdit(): Boolean {
