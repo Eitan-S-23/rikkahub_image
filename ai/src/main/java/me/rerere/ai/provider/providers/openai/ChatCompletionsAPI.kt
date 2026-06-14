@@ -49,6 +49,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.util.KeyRoulette
 import me.rerere.ai.util.configureReferHeaders
 import me.rerere.ai.util.encodeBase64
+import me.rerere.ai.util.hasImageGenerationIntent
 import me.rerere.ai.util.json
 import me.rerere.ai.util.mergeCustomBody
 import me.rerere.ai.util.parseErrorDetail
@@ -150,7 +151,8 @@ class ChatCompletionsAPI(
                     message = parseMessage(
                         jsonObject = message,
                         extraImageSources = imageResponseSources(choice, bodyJson),
-                        extractLooseImageUrls = params.model.shouldParseLooseImageUrls()
+                        extractLooseImageUrls = params.model.shouldParseLooseImageUrls() ||
+                            messages.hasImageGenerationIntent()
                     ),
                     finishReason = finishReason
                 )
@@ -229,7 +231,8 @@ class ChatCompletionsAPI(
                                         delta = parseMessage(
                                             jsonObject = message,
                                             extraImageSources = imageResponseSources(choice, it),
-                                            extractLooseImageUrls = params.model.shouldParseLooseImageUrls()
+                                            extractLooseImageUrls = params.model.shouldParseLooseImageUrls() ||
+                                                messages.hasImageGenerationIntent()
                                         ),
                                         message = null,
                                         finishReason = finishReason,
@@ -390,7 +393,7 @@ class ChatCompletionsAPI(
                     message = parseMessage(
                         jsonObject = message,
                         extraImageSources = imageResponseSources(choice, bodyJson),
-                        extractLooseImageUrls = params.model.shouldParseLooseImageUrls()
+                        extractLooseImageUrls = true
                     ),
                     finishReason = finishReason
                 )

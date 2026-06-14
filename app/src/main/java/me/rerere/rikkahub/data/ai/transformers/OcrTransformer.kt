@@ -13,6 +13,7 @@ import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.hasImageName
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.util.hasImageGenerationIntent
 import me.rerere.common.cache.LruCache
 import me.rerere.common.cache.SingleFileCacheStore
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -48,7 +49,11 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
         ctx: TransformerContext,
         messages: List<UIMessage>,
     ): List<UIMessage> {
-        if (ctx.model.inputModalities.contains(Modality.IMAGE) || ctx.model.hasImageName()) {
+        if (
+            ctx.model.inputModalities.contains(Modality.IMAGE) ||
+            ctx.model.hasImageName() ||
+            messages.hasImageGenerationIntent()
+        ) {
             return messages
         }
 
