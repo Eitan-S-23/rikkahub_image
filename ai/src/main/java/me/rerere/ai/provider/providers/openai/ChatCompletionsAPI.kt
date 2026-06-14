@@ -596,6 +596,7 @@ class ChatCompletionsAPI(
         return when {
             base.contains("chat/completions", ignoreCase = true) -> base
             path.startsWith("http://") || path.startsWith("https://") -> path
+            path == "/chat/completions" && !base.endsWith("/v1") -> "$base/v1/chat/completions"
             path.isNotBlank() -> "$base/${path.trimStart('/')}"
             base.endsWith("/v1") -> "$base/chat/completions"
             else -> "$base/v1/chat/completions"
