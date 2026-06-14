@@ -4,20 +4,56 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
-import dynamiccolor.DynamicScheme
-import palettes.TonalPalette
+import kotlin.math.abs
 
-private fun TonalPalette.color(toneValue: Int): Color = Color(tone(toneValue))
+private data class Hsl(
+    val hue: Float,
+    val saturation: Float,
+    val lightness: Float,
+)
 
-fun DynamicScheme.toColorScheme(): ColorScheme {
-    val p = primaryPalette
-    val s = secondaryPalette
-    val t = tertiaryPalette
-    val n = neutralPalette
-    val nv = neutralVariantPalette
-    val e = errorPalette
+private data class TonalPalette(
+    val hue: Float,
+    val saturation: Float,
+) {
+    fun color(toneValue: Int): Color {
+        return Hsl(
+            hue = hue,
+            saturation = saturation,
+            lightness = (toneValue / 100f).coerceIn(0f, 1f),
+        ).toColor()
+    }
+}
 
-    return if (isDark) {
+fun seedColorScheme(
+    primarySeed: Color,
+    dark: Boolean,
+    secondarySeed: Color? = null,
+    tertiarySeed: Color? = null,
+): ColorScheme {
+    val primaryHsl = primarySeed.toHsl()
+    val p = primarySeed.toTonalPalette(saturationScale = 0.92f, minSaturation = 0.28f)
+    val s = secondarySeed?.toTonalPalette(saturationScale = 0.75f, minSaturation = 0.16f)
+        ?: TonalPalette(
+            hue = primaryHsl.hue,
+            saturation = (primaryHsl.saturation * 0.35f).coerceIn(0.14f, 0.42f),
+        )
+    val t = tertiarySeed?.toTonalPalette(saturationScale = 0.85f, minSaturation = 0.18f)
+        ?: TonalPalette(
+            hue = primaryHsl.rotate(60f).hue,
+            saturation = (primaryHsl.saturation * 0.55f).coerceIn(0.20f, 0.58f),
+        )
+    val n = TonalPalette(
+        hue = primaryHsl.hue,
+        saturation = (primaryHsl.saturation * 0.08f).coerceIn(0.02f, 0.08f),
+    )
+    val nv = TonalPalette(
+        hue = primaryHsl.hue,
+        saturation = (primaryHsl.saturation * 0.16f).coerceIn(0.04f, 0.14f),
+    )
+    val e = Color(0xFFBA1A1A.toInt()).toTonalPalette(saturationScale = 1f, minSaturation = 0.55f)
+
+    return if (dark) {
         darkColorScheme(
             primary = p.color(80),
             onPrimary = p.color(20),
@@ -55,18 +91,6 @@ fun DynamicScheme.toColorScheme(): ColorScheme {
             surfaceContainerHighest = n.color(22),
             surfaceContainerLow = n.color(10),
             surfaceContainerLowest = n.color(4),
-            primaryFixed = p.color(90),
-            primaryFixedDim = p.color(80),
-            onPrimaryFixed = p.color(10),
-            onPrimaryFixedVariant = p.color(30),
-            secondaryFixed = s.color(90),
-            secondaryFixedDim = s.color(80),
-            onSecondaryFixed = s.color(10),
-            onSecondaryFixedVariant = s.color(30),
-            tertiaryFixed = t.color(90),
-            tertiaryFixedDim = t.color(80),
-            onTertiaryFixed = t.color(10),
-            onTertiaryFixedVariant = t.color(30),
         )
     } else {
         lightColorScheme(
@@ -106,18 +130,75 @@ fun DynamicScheme.toColorScheme(): ColorScheme {
             surfaceContainerHighest = n.color(90),
             surfaceContainerLow = n.color(96),
             surfaceContainerLowest = n.color(100),
-            primaryFixed = p.color(90),
-            primaryFixedDim = p.color(80),
-            onPrimaryFixed = p.color(10),
-            onPrimaryFixedVariant = p.color(30),
-            secondaryFixed = s.color(90),
-            secondaryFixedDim = s.color(80),
-            onSecondaryFixed = s.color(10),
-            onSecondaryFixedVariant = s.color(30),
-            tertiaryFixed = t.color(90),
-            tertiaryFixedDim = t.color(80),
-            onTertiaryFixed = t.color(10),
-            onTertiaryFixedVariant = t.color(30),
         )
     }
+}
+
+private fun Color.toTonalPalette(
+    saturationScale: Float,
+    minSaturation: Float,
+): TonalPalette {
+    val hsl = toHsl()
+    val saturation = if (hsl.saturation == 0f) {
+        minSaturation
+    } else {
+        (hsl.saturation * saturationScale).coerceAtLeast(minSaturation)
+    }
+    return TonalPalette(
+        hue = hsl.hue,
+        saturation = saturation.coerceIn(0f, 1f),
+    )
+}
+
+private fun Color.toHsl(): Hsl {
+    val max = maxOf(red, green, blue)
+    val min = minOf(red, green, blue)
+    val delta = max - min
+    val lightness = (max + min) / 2f
+
+    if (delta == 0f) {
+        return Hsl(hue = 0f, saturation = 0f, lightness = lightness)
+    }
+
+    val saturation = delta / (1f - abs(2f * lightness - 1f))
+    val hue = when (max) {
+        red -> 60f * (((green - blue) / delta) % 6f)
+        green -> 60f * (((blue - red) / delta) + 2f)
+        else -> 60f * (((red - green) / delta) + 4f)
+    }.let(::normalizeHue)
+
+    return Hsl(
+        hue = hue,
+        saturation = saturation.coerceIn(0f, 1f),
+        lightness = lightness.coerceIn(0f, 1f),
+    )
+}
+
+private fun Hsl.toColor(): Color {
+    val chroma = (1f - abs(2f * lightness - 1f)) * saturation
+    val huePrime = hue / 60f
+    val x = chroma * (1f - abs((huePrime % 2f) - 1f))
+    val (redPrime, greenPrime, bluePrime) = when {
+        huePrime < 1f -> Triple(chroma, x, 0f)
+        huePrime < 2f -> Triple(x, chroma, 0f)
+        huePrime < 3f -> Triple(0f, chroma, x)
+        huePrime < 4f -> Triple(0f, x, chroma)
+        huePrime < 5f -> Triple(x, 0f, chroma)
+        else -> Triple(chroma, 0f, x)
+    }
+    val match = lightness - chroma / 2f
+
+    return Color(
+        red = (redPrime + match).coerceIn(0f, 1f),
+        green = (greenPrime + match).coerceIn(0f, 1f),
+        blue = (bluePrime + match).coerceIn(0f, 1f),
+    )
+}
+
+private fun Hsl.rotate(degrees: Float): Hsl {
+    return copy(hue = normalizeHue(hue + degrees))
+}
+
+private fun normalizeHue(hue: Float): Float {
+    return ((hue % 360f) + 360f) % 360f
 }

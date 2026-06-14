@@ -20,11 +20,6 @@ android {
     buildFeatures {
         compose = true
     }
-    sourceSets {
-        named("main") {
-            kotlin.srcDir("material-color-utilities/kotlin")
-        }
-    }
 }
 
 dependencies {
