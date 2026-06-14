@@ -258,7 +258,7 @@ class ChatCompletionsAPI(
         providerSetting: ProviderSetting.OpenAI,
         params: ImageGenerationParams,
     ): Flow<ImageGenerationItem> = flow {
-        val chunk = generateText(
+        val chunk = generateImageChatCompletion(
             providerSetting = providerSetting,
             messages = listOf(UIMessage.user(params.prompt)),
             params = TextGenerationParams(
@@ -274,13 +274,13 @@ class ChatCompletionsAPI(
         providerSetting: ProviderSetting.OpenAI,
         params: ImageEditParams,
     ): Flow<ImageGenerationItem> = flow {
-        val chunk = generateText(
+        val chunk = generateImageChatCompletion(
             providerSetting = providerSetting,
             messages = listOf(
                 UIMessage(
                     role = MessageRole.USER,
                     parts = buildList {
-                        add(UIMessagePart.Text(params.prompt))
+                        add(UIMessagePart.Text(params.prompt.withImageEditInstruction(params.images.size)))
                         params.images.forEach { image ->
                             add(UIMessagePart.Image(image.toUploadImageUrl()))
                         }
@@ -296,11 +296,70 @@ class ChatCompletionsAPI(
         emitGeneratedImages(chunk)
     }
 
+    private suspend fun generateImageChatCompletion(
+        providerSetting: ProviderSetting.OpenAI,
+        messages: List<UIMessage>,
+        params: TextGenerationParams,
+    ): MessageChunk = withContext(Dispatchers.IO) {
+        val requestBody =
+            buildChatCompletionRequest(
+                messages = messages,
+                params = params,
+                providerSetting = providerSetting,
+                forceImageOutput = true,
+            )
+
+        val request = Request.Builder()
+            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+            .headers(params.customHeaders.toHeaders())
+            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
+            .addHeader("Authorization", "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}")
+            .configureReferHeaders(providerSetting.baseUrl)
+            .build()
+
+        val imageCount = messages.sumOf { message ->
+            message.parts.count { part -> part is UIMessagePart.Image }
+        }
+        Log.i(TAG, "generateImageChatCompletion: model=${params.model.modelId}, images=$imageCount")
+
+        val response = client.newCall(request).await()
+        if (!response.isSuccessful) {
+            throw Exception("Failed to get response: ${response.code} ${response.body?.string()}")
+        }
+
+        val bodyStr = response.body?.string() ?: ""
+        val bodyJson = json.parseToJsonElement(bodyStr).jsonObject
+        val id = bodyJson["id"]?.jsonPrimitive?.contentOrNull ?: ""
+        val model = bodyJson["model"]?.jsonPrimitive?.contentOrNull ?: ""
+        val choice = bodyJson["choices"]?.jsonArray?.get(0)?.jsonObject ?: error("choices is null")
+        val message = choice["message"]?.jsonObject ?: throw Exception("message is null")
+        val finishReason = choice["finish_reason"]
+            ?.jsonPrimitive
+            ?.content
+            ?: "unknown"
+        val usage = parseTokenUsage(bodyJson["usage"] as? JsonObject)
+
+        MessageChunk(
+            id = id,
+            model = model,
+            choices = listOf(
+                UIMessageChoice(
+                    index = 0,
+                    delta = null,
+                    message = parseMessage(message),
+                    finishReason = finishReason
+                )
+            ),
+            usage = usage
+        )
+    }
+
     private fun buildChatCompletionRequest(
         messages: List<UIMessage>,
         params: TextGenerationParams,
         providerSetting: ProviderSetting.OpenAI,
         stream: Boolean = false,
+        forceImageOutput: Boolean = false,
     ): JsonObject {
         val host = providerSetting.baseUrl.toHttpUrl().host
         return buildJsonObject {
@@ -323,7 +382,8 @@ class ChatCompletionsAPI(
             }
 
             // open router适配
-            if (params.model.type == ModelType.IMAGE ||
+            if (forceImageOutput ||
+                params.model.type == ModelType.IMAGE ||
                 params.model.outputModalities.contains(Modality.IMAGE)
             ) {
                 put("modalities", buildJsonArray {
@@ -849,5 +909,15 @@ class ChatCompletionsAPI(
         "webp" -> "image/webp"
         "gif" -> "image/gif"
         else -> "image/png"
+    }
+
+    private fun String.withImageEditInstruction(imageCount: Int): String {
+        val source = if (imageCount == 1) {
+            "the attached source image"
+        } else {
+            "the attached source images"
+        }
+        return "Use $source as the image-to-image input. " +
+            "Generate the output image according to this instruction: $this"
     }
 }

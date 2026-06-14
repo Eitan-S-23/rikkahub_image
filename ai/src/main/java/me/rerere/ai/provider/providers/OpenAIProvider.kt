@@ -271,7 +271,7 @@ class OpenAIProvider(
             "At least one image is required"
         }
 
-        if (providerSetting.useChatCompletionsForImage(params.model)) {
+        if (providerSetting.useChatCompletionsForImageEdit()) {
             return chatCompletionsAPI.editImage(providerSetting, params)
         }
 
@@ -409,6 +409,13 @@ class OpenAIProvider(
         return model.type == ModelType.IMAGE ||
             Modality.IMAGE in model.inputModalities ||
             Modality.IMAGE in model.outputModalities
+    }
+
+    private fun ProviderSetting.OpenAI.useChatCompletionsForImageEdit(): Boolean {
+        if (!chatCompletionsPath.contains("chat/completions", ignoreCase = true)) return false
+        if (baseUrl.contains("api.openai.com", ignoreCase = true)) return false
+
+        return true
     }
 
     companion object {
