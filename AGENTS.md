@@ -19,6 +19,7 @@
 - Agent 只能通过 `git push` 触发 GitHub Actions 进行编译构建验证。普通分支 push 触发 `.github/workflows/android-ci.yml`，推送 `v*` 标签触发 `.github/workflows/release.yml`。
 - `main` 分支 push 构建成功后会更新 GitHub Release `main-latest`，并把 sideload APK 上传为可下载 asset；推送 `v*` 标签构建成功后会把 sideload APK 上传到对应版本的 GitHub Release。sideload 构建使用 Release 的压缩/资源裁剪配置，优先使用 `SIDELOAD_KEYSTORE_BASE64`、`SIDELOAD_KEYSTORE_PASSWORD`、`SIDELOAD_KEY_ALIAS`、`SIDELOAD_KEY_PASSWORD` GitHub Secrets 中的固定签名私钥；未配置时回退到 Android debug key 自动签名。
 - 可使用 `scripts/generate-sideload-keystore.ps1` 生成 sideload 签名 keystore 和需要配置到 GitHub Secrets 的值；生成的 keystore、JKS/PKCS12 文件和本地 `local.properties` 不得提交到仓库。
+- Agent 每次修改程序并触发 GitHub Actions 构建前，应递增 `app/build.gradle.kts` 中的 `versionName` 和 `versionCode`，便于用户确认安装的是最新构建。
 - 如需验证构建结果，Agent 应查看 GitHub Actions 运行结果或 artifact，不得以本地构建替代。
 
 构建应用需要在 `app/` 下提供 `google-services.json`（用于 Firebase）；GitHub Actions 会生成占位配置用于 sideload 构建。

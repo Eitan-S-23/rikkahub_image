@@ -280,7 +280,7 @@ class ChatCompletionsAPI(
                 UIMessage(
                     role = MessageRole.USER,
                     parts = buildList {
-                        add(UIMessagePart.Text(params.prompt.withImageEditInstruction(params.images.size)))
+                        add(UIMessagePart.Text(params.prompt))
                         params.images.forEach { image ->
                             add(UIMessagePart.Image(image.toUploadImageUrl()))
                         }
@@ -302,11 +302,10 @@ class ChatCompletionsAPI(
         params: TextGenerationParams,
     ): MessageChunk = withContext(Dispatchers.IO) {
         val requestBody =
-            buildChatCompletionRequest(
+            buildImageChatCompletionRequest(
                 messages = messages,
                 params = params,
                 providerSetting = providerSetting,
-                forceImageOutput = true,
             )
 
         val request = Request.Builder()
@@ -359,7 +358,6 @@ class ChatCompletionsAPI(
         params: TextGenerationParams,
         providerSetting: ProviderSetting.OpenAI,
         stream: Boolean = false,
-        forceImageOutput: Boolean = false,
     ): JsonObject {
         val host = providerSetting.baseUrl.toHttpUrl().host
         return buildJsonObject {
@@ -382,8 +380,7 @@ class ChatCompletionsAPI(
             }
 
             // open router适配
-            if (forceImageOutput ||
-                params.model.type == ModelType.IMAGE ||
+            if (params.model.type == ModelType.IMAGE ||
                 params.model.outputModalities.contains(Modality.IMAGE)
             ) {
                 put("modalities", buildJsonArray {
@@ -538,6 +535,18 @@ class ChatCompletionsAPI(
                     }
                 }
             }
+        }.mergeCustomBody(params.customBody)
+    }
+
+    private fun buildImageChatCompletionRequest(
+        messages: List<UIMessage>,
+        params: TextGenerationParams,
+        providerSetting: ProviderSetting.OpenAI,
+    ): JsonObject {
+        return buildJsonObject {
+            put("model", params.model.modelId)
+            put("messages", buildMessages(messages, providerSetting.includeHistoryReasoning))
+            put("stream", false)
         }.mergeCustomBody(params.customBody)
     }
 
@@ -911,13 +920,4 @@ class ChatCompletionsAPI(
         else -> "image/png"
     }
 
-    private fun String.withImageEditInstruction(imageCount: Int): String {
-        val source = if (imageCount == 1) {
-            "the attached source image"
-        } else {
-            "the attached source images"
-        }
-        return "Use $source as the image-to-image input. " +
-            "Generate the output image according to this instruction: $this"
-    }
 }
