@@ -4,7 +4,7 @@
 
 ## Build, Test, and Development Commands
 
-使用 Android Studio 或命令行 Gradle：
+以下命令仅供 GitHub Actions 或人工参考；Agent 不得在本地执行这些命令：
 
 ```bash
 ./gradlew assembleDebug          # 构建 Debug APK
@@ -13,8 +13,14 @@
 ./gradlew lint                   # 运行 Android Lint
 ```
 
-构建应用需要在 `app/` 下提供 `google-services.json`（用于 Firebase）。
-`web` 模块会在 `preBuild` 阶段构建 `web-ui/` 并复制静态资源，需要本地可用 `pnpm`。
+## Agent Build Restriction
+
+- Agent 修改程序后，不得在本地运行任何编译、构建、测试或 lint 命令，包括但不限于 `./gradlew assemble*`、`./gradlew bundle*`、`./gradlew test`、`./gradlew lint`、`pnpm run build`、Android Studio Build/Run。
+- Agent 只能通过 `git push` 触发 GitHub Actions 进行编译构建验证。普通分支 push 触发 `.github/workflows/android-ci.yml`，推送 `v*` 标签触发 `.github/workflows/release.yml`。
+- 如需验证构建结果，Agent 应查看 GitHub Actions 运行结果或 artifact，不得以本地构建替代。
+
+构建应用需要在 `app/` 下提供 `google-services.json`（用于 Firebase）；GitHub Actions 的 Debug CI 会生成占位配置，Release 构建使用仓库 secrets。
+`web` 模块会在 `preBuild` 阶段构建 `web-ui/` 并复制静态资源；GitHub Actions 会安装 Node.js、pnpm 和 `web-ui` 依赖。
 
 ## Coding Style & Naming Conventions
 
