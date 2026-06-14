@@ -118,8 +118,9 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
         params: TextGenerationParams
     ): MessageChunk = withContext(Dispatchers.IO) {
         val requestBody = buildMessageRequest(providerSetting, messages, params)
+        val endpoint = claudeEndpoint(providerSetting.baseUrl, "messages")
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}/messages")
+            .url(endpoint)
             .headers(params.customHeaders.toHeaders())
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader("x-api-key", keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString()))
@@ -127,7 +128,7 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
             .configureReferHeaders(providerSetting.baseUrl)
             .build()
 
-        Log.i(TAG, "generateText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "generateText($endpoint): ${json.encodeToString(requestBody)}")
 
         val response = client.newCall(request).await()
         if (!response.isSuccessful) {
@@ -165,8 +166,9 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
         params: TextGenerationParams
     ): Flow<MessageChunk> = callbackFlow {
         val requestBody = buildMessageRequest(providerSetting, messages, params, stream = true)
+        val endpoint = claudeEndpoint(providerSetting.baseUrl, "messages")
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}/messages")
+            .url(endpoint)
             .headers(params.customHeaders.toHeaders())
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader("x-api-key", keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString()))
@@ -175,7 +177,7 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
             .configureReferHeaders(providerSetting.baseUrl)
             .build()
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "streamText($endpoint): ${json.encodeToString(requestBody)}")
 
         requestBody["messages"]!!.jsonArray.forEach {
             Log.i(TAG, "streamText: $it")
@@ -371,6 +373,10 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
             urls.forEach { add(ClaudeModelListAttempt(it, ClaudeAuthMode.X_API_KEY)) }
             urls.forEach { add(ClaudeModelListAttempt(it, ClaudeAuthMode.BEARER)) }
         }.distinct()
+    }
+
+    private fun claudeEndpoint(baseUrl: String, endpoint: String): String {
+        return claudeEndpointCandidates(baseUrl, endpoint).last()
     }
 
     private fun claudeEndpointCandidates(baseUrl: String, endpoint: String): List<String> {
