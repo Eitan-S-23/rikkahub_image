@@ -49,6 +49,8 @@ import me.rerere.ai.util.parseErrorDetail
 import me.rerere.ai.util.stringSafe
 import me.rerere.ai.util.toHeaders
 import me.rerere.common.http.await
+import me.rerere.common.http.jsonArrayOrNull
+import me.rerere.common.http.jsonObjectOrNull
 import me.rerere.common.http.jsonPrimitiveOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -68,32 +70,39 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
 
     override suspend fun listModels(providerSetting: ProviderSetting.Claude): List<Model> =
         withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url("${providerSetting.baseUrl}/models")
-                .addHeader("x-api-key", keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString()))
-                .addHeader("anthropic-version", ANTHROPIC_VERSION)
-                .get()
-                .build()
+            val key = keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())
+            var lastError = "No request attempted"
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                error("Failed to get models: ${response.code} ${response.body?.string()}")
+            for (attempt in claudeModelListAttempts(providerSetting.baseUrl)) {
+                val request = Request.Builder()
+                    .url(attempt.url)
+                    .addHeader("anthropic-version", ANTHROPIC_VERSION)
+                    .apply {
+                        when (attempt.authMode) {
+                            ClaudeAuthMode.X_API_KEY -> addHeader("x-api-key", key)
+                            ClaudeAuthMode.BEARER -> addHeader("Authorization", "Bearer $key")
+                        }
+                    }
+                    .get()
+                    .build()
+
+                runCatching {
+                    client.newCall(request).await().use { response ->
+                        val bodyStr = response.body?.string() ?: ""
+                        if (!response.isSuccessful) {
+                            lastError = "${response.code} $bodyStr"
+                            return@runCatching null
+                        }
+                        parseModelList(bodyStr)
+                    }
+                }.onSuccess { models ->
+                    if (models != null) return@withContext models
+                }.onFailure { throwable ->
+                    lastError = throwable.message ?: throwable.javaClass.simpleName
+                }
             }
 
-            val bodyStr = response.body?.string() ?: ""
-            val bodyJson = json.parseToJsonElement(bodyStr).jsonObject
-            val data = bodyJson["data"]?.jsonArray ?: return@withContext emptyList()
-
-            data.mapNotNull { modelJson ->
-                val modelObj = modelJson.jsonObject
-                val id = modelObj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val displayName = modelObj["display_name"]?.jsonPrimitive?.contentOrNull ?: id
-
-                Model(
-                    modelId = id,
-                    displayName = displayName,
-                )
-            }
+            error("Failed to get models: $lastError")
         }
 
     override suspend fun generateImage(
@@ -356,6 +365,72 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
         promptCacheTtl.apiValue?.let { put("ttl", it) }
     }
 
+    private fun claudeModelListAttempts(baseUrl: String): List<ClaudeModelListAttempt> {
+        val urls = claudeEndpointCandidates(baseUrl, "models")
+        return buildList {
+            urls.forEach { add(ClaudeModelListAttempt(it, ClaudeAuthMode.X_API_KEY)) }
+            urls.forEach { add(ClaudeModelListAttempt(it, ClaudeAuthMode.BEARER)) }
+        }.distinct()
+    }
+
+    private fun claudeEndpointCandidates(baseUrl: String, endpoint: String): List<String> {
+        val base = baseUrl.trimEnd('/')
+        val normalizedEndpoint = endpoint.trimStart('/')
+        val current = when {
+            base.endsWith("/$normalizedEndpoint", ignoreCase = true) -> base
+            else -> "$base/$normalizedEndpoint"
+        }
+        val versioned = when {
+            base.endsWith("/$normalizedEndpoint", ignoreCase = true) -> base
+            base.endsWith("/messages", ignoreCase = true) || base.endsWith("/models", ignoreCase = true) ->
+                "${base.substringBeforeLast("/")}/$normalizedEndpoint"
+            base.endsWith("/v1", ignoreCase = true) -> "$base/$normalizedEndpoint"
+            else -> "$base/v1/$normalizedEndpoint"
+        }
+        return listOf(current, versioned).distinct()
+    }
+
+    private fun parseModelList(bodyStr: String): List<Model> {
+        val bodyJson = json.parseToJsonElement(bodyStr)
+        val data = when (bodyJson) {
+            is JsonArray -> bodyJson
+            is JsonObject -> bodyJson["data"]?.jsonArrayOrNull
+                ?: bodyJson["data"]?.jsonObjectOrNull?.get("models")?.jsonArrayOrNull
+                ?: bodyJson["models"]?.jsonArrayOrNull
+                ?: JsonArray(emptyList())
+            else -> JsonArray(emptyList())
+        }
+
+        return data.mapNotNull { modelJson ->
+            when (modelJson) {
+                is JsonObject -> {
+                    val id = modelJson.firstString("id", "model", "modelId", "name") ?: return@mapNotNull null
+                    val displayName = modelJson.firstString("display_name", "displayName", "name", "id") ?: id
+                    Model(
+                        modelId = id,
+                        displayName = displayName,
+                    )
+                }
+
+                is JsonPrimitive -> {
+                    val id = modelJson.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    Model(
+                        modelId = id,
+                        displayName = id,
+                    )
+                }
+
+                else -> null
+            }
+        }
+    }
+
+    private fun JsonObject.firstString(vararg keys: String): String? {
+        return keys.firstNotNullOfOrNull { key ->
+            this[key]?.jsonPrimitiveOrNull?.contentOrNull?.takeIf { it.isNotBlank() }
+        }
+    }
+
     private fun buildMessages(
         messages: List<UIMessage>,
         promptCaching: Boolean,
@@ -600,4 +675,14 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
             cachedTokens = cachedInputTokens,
         )
     }
+
+    private enum class ClaudeAuthMode {
+        X_API_KEY,
+        BEARER
+    }
+
+    private data class ClaudeModelListAttempt(
+        val url: String,
+        val authMode: ClaudeAuthMode
+    )
 }
