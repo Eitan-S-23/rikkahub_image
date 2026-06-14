@@ -90,6 +90,7 @@ import me.rerere.common.android.appTempFolder
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.ArrowUp02
+import me.rerere.hugeicons.stroke.Bug01
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Colors
 import me.rerere.hugeicons.stroke.Copy01
@@ -122,9 +123,18 @@ fun ImageGenPage(
     val scope = rememberCoroutineScope()
 
     val isGenerating by vm.isGenerating.collectAsStateWithLifecycle()
+    val debugInfo by vm.debugInfo.collectAsStateWithLifecycle()
     var showCancelDialog by remember { mutableStateOf(false) }
+    var showDebugDialog by remember { mutableStateOf(false) }
     BackHandler(isGenerating) {
         showCancelDialog = true
+    }
+    if (showDebugDialog) {
+        ImageGenerationDebugDialog(
+            debugInfo = debugInfo,
+            onRefresh = vm::refreshDebugInfo,
+            onDismiss = { showDebugDialog = false }
+        )
     }
     if (showCancelDialog) {
         CancelDialog(
@@ -146,6 +156,17 @@ fun ImageGenPage(
                     BackButton()
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            vm.refreshDebugInfo()
+                            showDebugDialog = true
+                        }
+                    ) {
+                        Icon(
+                            imageVector = HugeIcons.Bug01,
+                            contentDescription = "Image debug info"
+                        )
+                    }
                     IconButton(onClick = vm::startNewSession) {
                         Icon(
                             imageVector = HugeIcons.Add01,
@@ -171,6 +192,53 @@ fun ImageGenPage(
             }
         }
     }
+}
+
+@Composable
+private fun ImageGenerationDebugDialog(
+    debugInfo: String,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val clipboardManager = LocalClipboardManager.current
+    val toaster = LocalToaster.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Image debug info") },
+        text = {
+            OutlinedTextField(
+                value = debugInfo,
+                onValueChange = {},
+                readOnly = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 220.dp, max = 420.dp),
+                minLines = 10,
+                maxLines = 18,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(debugInfo))
+                    toaster.show(message = "Debug info copied", type = ToastType.Success)
+                }
+            ) {
+                Text("Copy")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onRefresh) {
+                    Text("Refresh")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
+                }
+            }
+        }
+    )
 }
 
 @Composable
